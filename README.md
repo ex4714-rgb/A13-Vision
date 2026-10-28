@@ -1,8 +1,8 @@
 # A13 Vision
 
-*A quieter screen for a little box with a hidden engine.*
+*A quieter home screen for a little box with a hidden engine.*
 
-An Apple TV-inspired Android TV launcher for a Chinese RK3528 box: a cinematic ringed-planet backdrop and a grid of wide app tiles with more rounded corners. Each tile uses the app’s own colors and real Android icon, enlarged without inventing a replacement logo. A quick-open card for the last app launched from this home screen sits below the clock. Use the remote’s arrow keys to move from the first app row up to Wi-Fi, then right to Search and Settings; press OK to open the selected control. The Settings shortcut opens the box’s own system Settings app. The launcher cannot control navigation inside that separate app. The first app gets a soft focus highlight; there is no recommendation feed.
+A minimalist Android TV launcher for a Chinese RK3528 box: a cinematic sunset home screen with a cleaner Apple TV-inspired feel. It shows launchable apps already installed on the box, uses their real names and icons, and supports remote-controlled rearranging. No pretend app icons or recommendation feed. It is designed to feel lighter; real speed gains still need testing on the box.
 
 ## The box
 
@@ -17,7 +17,9 @@ The memory and storage figures describe this box’s reported configuration. The
 
 ## The launcher
 
-Every installed app that Android exposes with a standard or TV launcher shortcut appears in the grid, including system apps. Apps without a launcher shortcut cannot be opened directly from the grid. Each tile uses the real icon and name provided by Android, with the app’s background color filling a wide card. The last app launched from this home screen can be opened again with one click; whether playback resumes is up to that app. The first app receives focus on startup unless another app is chosen. Hold **OK/Select** or press **MENU** to arrange apps; use the arrow keys to move one; press **OK/Select** to choose the startup focus; press **BACK** to finish. The order and focus are saved on the box. The launcher opens Android’s own Wi-Fi settings screen when the Wi-Fi control is selected; it does not change the system settings menus.
+The home screen discovers installed apps with Android launcher shortcuts and uses each app’s own name and icon. The rounded tiles use a soft brand-color gradient, larger icons, and readable labels. The last app card has its own space above the scrollable app grid so it does not cover app buttons. Hold **OK/Select** or press **MENU** to arrange apps; use the arrows to move one; press **OK/Select** to choose the startup focus; press **BACK** to finish. The order and focus are saved on the box.
+
+The **Settings** button opens an A13 menu that can be navigated with the remote. Its categories open the corresponding system settings pages. The behavior inside those pages is still provided by the box firmware.
 
 ## Build
 

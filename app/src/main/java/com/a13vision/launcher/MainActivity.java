@@ -30,6 +30,7 @@ import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -47,6 +48,28 @@ import java.util.Set;
 
 /** A lightweight Android TV home screen that displays only apps found on the device. */
 public class MainActivity extends Activity {
+    private static final String[] SETTINGS_MENU_LABELS = {
+            "Réseau & Wi-Fi", "Applications", "Affichage", "Son", "À propos"
+    };
+    private static final String[] SETTINGS_MENU_DESCRIPTIONS = {
+            "Gérer la connexion Wi-Fi et l’accès au réseau de la box.",
+            "Consulter les applications installées et leurs autorisations.",
+            "Accéder aux réglages d’image et de résolution de la box.",
+            "Accéder aux réglages de volume et de sortie audio.",
+            "Voir les informations Android et le modèle de l’appareil."
+    };
+    private static final String[] SETTINGS_MENU_ACTIONS = {
+            Settings.ACTION_WIFI_SETTINGS,
+            Settings.ACTION_APPLICATION_SETTINGS,
+            Settings.ACTION_DISPLAY_SETTINGS,
+            Settings.ACTION_SOUND_SETTINGS,
+            Settings.ACTION_DEVICE_INFO_SETTINGS
+    };
+    private static final String[] SETTINGS_MENU_ACTION_LABELS = {
+            "Ouvrir les réglages Wi-Fi", "Ouvrir les applications", "Ouvrir l’affichage",
+            "Ouvrir les réglages audio", "Ouvrir les informations de la box"
+    };
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable clockUpdater = new Runnable() {
         @Override public void run() {
@@ -65,11 +88,21 @@ public class MainActivity extends Activity {
     private TextView lastAppNameView;
     private ImageView lastAppIconView;
     private LinearLayout lastAppCard;
+    private ScrollView appScroll;
     private GridLayout appGrid;
+    private FrameLayout settingsPanel;
+    private LinearLayout settingsCategoryColumn;
+    private LinearLayout settingsDetailBody;
+    private TextView settingsDetailTitle;
+    private TextView settingsDetailDescription;
+    private View settingsActionView;
+    private final List<TextView> settingsCategoryButtons = new ArrayList<>();
     private int appCellWidthDp;
     private int appTileHeightDp;
+    private int selectedSettingsCategory;
     private boolean arrangeMode;
     private boolean focusLastAppOnReturn;
+    private boolean focusSettingsActionOnReturn;
     private final List<AppEntry> launchableApps = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -87,7 +120,14 @@ public class MainActivity extends Activity {
         refreshAppGrid();
         updateLastAppCard();
         if (root != null) root.post(() -> {
-            if (focusLastAppOnReturn && lastAppCard.getVisibility() == View.VISIBLE) {
+            if (settingsPanel != null && settingsPanel.getVisibility() == View.VISIBLE) {
+                if (focusSettingsActionOnReturn && settingsActionView != null) {
+                    focusSettingsActionOnReturn = false;
+                    settingsActionView.requestFocus();
+                } else if (!settingsPanel.hasFocus() && !settingsCategoryButtons.isEmpty()) {
+                    settingsCategoryButtons.get(selectedSettingsCategory).requestFocus();
+                }
+            } else if (focusLastAppOnReturn && lastAppCard.getVisibility() == View.VISIBLE) {
                 focusLastAppOnReturn = false;
                 lastAppCard.requestFocus();
             } else {
@@ -107,6 +147,14 @@ public class MainActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int keyCode = event.getKeyCode();
         boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        if (settingsPanel != null && settingsPanel.getVisibility() == View.VISIBLE) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (down) closeSettingsMenu();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MENU) return true;
+            return super.dispatchKeyEvent(event);
+        }
         if (keyCode == KeyEvent.KEYCODE_MENU) {
             if (down) {
                 if (arrangeMode) exitArrangeMode(); else enterArrangeMode();
@@ -154,27 +202,41 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
 
         ImageView wallpaper = new ImageView(this);
-        wallpaper.setImageResource(R.drawable.ringed_world);
+        wallpaper.setImageResource(R.drawable.sunset_horizon);
         wallpaper.setScaleType(ImageView.ScaleType.CENTER_CROP);
         root.addView(wallpaper, new FrameLayout.LayoutParams(-1, -1));
 
         View shade = new View(this);
         shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x48040B1A, 0x2A030A18, 0x62020712}));
+                new int[]{0x30040B1A, 0x20030A18, 0x6B020712}));
         root.addView(shade, new FrameLayout.LayoutParams(-1, -1));
         root.addView(buildHeader(), new FrameLayout.LayoutParams(-1, dp(94), Gravity.TOP));
 
         lastAppCard = buildLastAppCard();
-        FrameLayout.LayoutParams lastAppParams = new FrameLayout.LayoutParams(dp(260), dp(58),
+        FrameLayout.LayoutParams lastAppParams = new FrameLayout.LayoutParams(dp(310), dp(68),
                 Gravity.TOP | Gravity.START);
         lastAppParams.leftMargin = dp(56);
-        lastAppParams.topMargin = dp(100);
+        lastAppParams.topMargin = dp(104);
+        root.addView(lastAppCard, lastAppParams);
 
         appGrid = buildAppGrid();
-        FrameLayout.LayoutParams gridParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
-        gridParams.topMargin = dp(34);
-        root.addView(appGrid, gridParams);
-        root.addView(lastAppCard, lastAppParams);
+        appScroll = new ScrollView(this);
+        appScroll.setFillViewport(false);
+        appScroll.setVerticalScrollBarEnabled(false);
+        appScroll.setClipToPadding(false);
+        appScroll.setFocusable(false);
+        appScroll.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1, Gravity.TOP);
+        scrollParams.topMargin = dp(184);
+        scrollParams.bottomMargin = dp(88);
+        scrollParams.leftMargin = dp(24);
+        scrollParams.rightMargin = dp(24);
+        root.addView(appScroll, scrollParams);
+        FrameLayout gridHolder = new FrameLayout(this);
+        appScroll.addView(gridHolder, new ScrollView.LayoutParams(-1, -2));
+        FrameLayout.LayoutParams gridParams = new FrameLayout.LayoutParams(-2, -2,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        gridHolder.addView(appGrid, gridParams);
 
         hintView = text("MENU / OK : organiser", 12, 0xF2FFFFFF);
         hintView.setGravity(Gravity.CENTER);
@@ -185,6 +247,9 @@ public class MainActivity extends Activity {
         hintParams.rightMargin = dp(48);
         hintParams.bottomMargin = dp(38);
         root.addView(hintView, hintParams);
+
+        settingsPanel = buildSettingsMenu();
+        root.addView(settingsPanel, new FrameLayout.LayoutParams(-1, -1));
 
         root.setFocusableInTouchMode(true);
         root.post(this::focusFirstOrChosenApp);
@@ -231,7 +296,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(dp(48), dp(48));
         settingsParams.leftMargin = dp(8);
         header.addView(settingsView, settingsParams);
-        settingsView.setOnClickListener(v -> openSettings());
+        settingsView.setOnClickListener(v -> openSettingsMenu());
 
         wifiView.setNextFocusRightId(searchView.getId());
         searchView.setNextFocusLeftId(wifiView.getId());
@@ -242,36 +307,37 @@ public class MainActivity extends Activity {
 
     private LinearLayout buildLastAppCard() {
         LinearLayout card = new LinearLayout(this);
+        card.setId(View.generateViewId());
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(11), dp(6), dp(12), dp(6));
-        card.setBackground(round(0x66303D55, dp(15), 0x66DDEEFF, dp(1)));
+        card.setPadding(dp(14), dp(8), dp(14), dp(8));
+        card.setBackground(round(0x77303D55, dp(18), 0x88DDEEFF, dp(1)));
         card.setFocusable(true);
         card.setContentDescription("Last app used");
 
         lastAppIconView = new ImageView(this);
         lastAppIconView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(40), dp(40));
-        iconParams.rightMargin = dp(11);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        iconParams.rightMargin = dp(13);
         card.addView(lastAppIconView, iconParams);
 
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.setGravity(Gravity.CENTER_VERTICAL);
-        TextView heading = text("LAST APP USED", 9, 0xCFFFFFFF);
+        TextView heading = text("DERNIÈRE APPLICATION", 10, 0xCFFFFFFF);
         heading.setLetterSpacing(0.08f);
-        lastAppNameView = text("", 13, Color.WHITE);
+        lastAppNameView = text("", 15, Color.WHITE);
         lastAppNameView.setSingleLine(true);
         lastAppNameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         labels.addView(heading);
         labels.addView(lastAppNameView);
         card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
 
-        TextView play = text("▶  REPRENDRE", 9, Color.WHITE);
+        TextView play = text("▶  REPRENDRE", 11, Color.WHITE);
         play.setGravity(Gravity.CENTER);
-        card.addView(play, new LinearLayout.LayoutParams(-2, dp(36)));
+        card.addView(play, new LinearLayout.LayoutParams(-2, dp(42)));
         card.setOnFocusChangeListener((v, focused) -> v.setBackground(round(
-                focused ? 0x88466C92 : 0x66303D55, dp(15),
+                focused ? 0x88466C92 : 0x77303D55, dp(18),
                 focused ? 0xFFE5F5FF : 0x66DDEEFF, focused ? dp(2) : dp(1))));
         return card;
     }
@@ -290,6 +356,7 @@ public class MainActivity extends Activity {
         }
         if (lastApp == null) {
             lastAppCard.setVisibility(View.GONE);
+            updateAppFocusLinks();
             return;
         }
         AppEntry appToLaunch = lastApp;
@@ -298,6 +365,7 @@ public class MainActivity extends Activity {
         lastAppIconView.setImageDrawable(lastApp.icon);
         lastAppNameView.setText(lastApp.label);
         lastAppCard.setOnClickListener(v -> launch(appToLaunch));
+        updateAppFocusLinks();
     }
 
     private GridLayout buildAppGrid() {
@@ -376,10 +444,32 @@ public class MainActivity extends Activity {
             grid.addView(tile, params);
         }
         if (grid.getChildCount() > 0 && wifiView != null) {
-            int firstAppId = grid.getChildAt(0).getId();
-            wifiView.setNextFocusDownId(firstAppId);
-            if (searchView != null) searchView.setNextFocusDownId(firstAppId);
-            if (settingsView != null) settingsView.setNextFocusDownId(firstAppId);
+            updateAppFocusLinks();
+        }
+    }
+
+    private void updateAppFocusLinks() {
+        if (appGrid == null || appGrid.getChildCount() == 0 || wifiView == null) return;
+        View firstApp = appGrid.getChildAt(0);
+        int firstAppId = firstApp.getId();
+        if (!firstApp.isFocusable() || firstAppId == View.NO_ID) {
+            wifiView.setNextFocusDownId(wifiView.getId());
+            if (searchView != null) searchView.setNextFocusDownId(searchView.getId());
+            if (settingsView != null) settingsView.setNextFocusDownId(settingsView.getId());
+            return;
+        }
+        boolean showLastApp = lastAppCard != null && lastAppCard.getVisibility() == View.VISIBLE;
+        int headerDownTarget = showLastApp ? lastAppCard.getId() : firstAppId;
+        wifiView.setNextFocusDownId(headerDownTarget);
+        if (searchView != null) searchView.setNextFocusDownId(headerDownTarget);
+        if (settingsView != null) settingsView.setNextFocusDownId(headerDownTarget);
+        if (showLastApp) {
+            lastAppCard.setNextFocusUpId(wifiView.getId());
+            lastAppCard.setNextFocusDownId(firstAppId);
+        }
+        for (int i = 0; i < Math.min(6, appGrid.getChildCount()); i++) {
+            View tile = appGrid.getChildAt(i);
+            tile.setNextFocusUpId(showLastApp ? lastAppCard.getId() : wifiView.getId());
         }
     }
 
@@ -393,12 +483,14 @@ public class MainActivity extends Activity {
         tile.setContentDescription(app.label);
         tile.setPadding(dp(3), dp(2), dp(3), dp(2));
 
-        int cardHeightDp = appTileHeightDp - 27;
-        int radius = dp(20);
+        int cardHeightDp = appTileHeightDp - 32;
+        int radius = dp(22);
         int backgroundColor = dominantIconColor(app.icon);
         FrameLayout card = new FrameLayout(this);
-        card.setBackground(round(backgroundColor, radius, 0, 0));
+        card.setBackground(gradientRound(blendColor(backgroundColor, Color.WHITE, 0.13f),
+                blendColor(backgroundColor, Color.BLACK, 0.28f), radius, 0x66FFFFFF, dp(1)));
         card.setClipToOutline(true);
+        card.setElevation(dp(3));
 
         Drawable adaptiveBackground = adaptiveIconBackground(app.icon);
         if (adaptiveBackground != null) {
@@ -408,7 +500,14 @@ public class MainActivity extends Activity {
             card.addView(background, new FrameLayout.LayoutParams(-1, -1));
         }
 
-        int iconSize = Math.min(dp(72), dp(cardHeightDp - 14));
+        View sheen = new View(this);
+        GradientDrawable sheenDrawable = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0x32FFFFFF, 0x0EFFFFFF, 0x00000000});
+        sheenDrawable.setCornerRadius(radius);
+        sheen.setBackground(sheenDrawable);
+        card.addView(sheen, new FrameLayout.LayoutParams(-1, -1));
+
+        int iconSize = Math.min(dp(94), dp(cardHeightDp - 8));
         ImageView icon = new ImageView(this);
         icon.setImageDrawable(adaptiveIconForeground(app.icon));
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -421,18 +520,20 @@ public class MainActivity extends Activity {
         card.addView(outline, new FrameLayout.LayoutParams(-1, -1));
         tile.addView(card, new LinearLayout.LayoutParams(-1, dp(cardHeightDp)));
 
-        TextView caption = text(app.label, 11, 0xF5FFFFFF);
+        TextView caption = text(app.label, 15, 0xFFFFFFFF);
         caption.setGravity(Gravity.CENTER);
         caption.setSingleLine(true);
         caption.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        caption.setPadding(dp(2), dp(5), dp(2), 0);
+        caption.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        caption.setShadowLayer(dp(3), 0, dp(1), 0xB3000000);
+        caption.setPadding(dp(2), dp(6), dp(2), 0);
         tile.addView(caption, new LinearLayout.LayoutParams(-1, -2));
         tile.setOnFocusChangeListener((v, focused) -> {
             outline.setBackground(round(0x00000000, radius,
                     focused ? 0xFFE5F5FF : 0x66FFFFFF, focused ? dp(2) : dp(1)));
-            card.animate().scaleX(focused ? 1.045f : 1f).scaleY(focused ? 1.045f : 1f)
+            card.animate().scaleX(focused ? 1.055f : 1f).scaleY(focused ? 1.055f : 1f)
                     .setDuration(170).start();
-            card.setElevation(focused ? dp(12) : 0);
+            card.setElevation(focused ? dp(18) : dp(3));
             caption.setTextColor(focused ? Color.WHITE : 0xD9FFFFFF);
             caption.setTypeface(null, focused ? Typeface.BOLD : Typeface.NORMAL);
         });
@@ -661,6 +762,186 @@ public class MainActivity extends Activity {
                 }).show();
     }
 
+    private FrameLayout buildSettingsMenu() {
+        FrameLayout panel = new FrameLayout(this);
+        panel.setVisibility(View.GONE);
+        panel.setFocusable(true);
+        panel.setFocusableInTouchMode(true);
+        panel.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xF10A1422, 0xF50A1220, 0xF9080E18}));
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.HORIZONTAL);
+        content.setGravity(Gravity.CENTER_VERTICAL);
+        content.setPadding(dp(56), dp(38), dp(56), dp(38));
+        panel.addView(content, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout sidebar = new LinearLayout(this);
+        sidebar.setOrientation(LinearLayout.VERTICAL);
+        sidebar.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Réglages", 30, Color.WHITE);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        sidebar.addView(title, new LinearLayout.LayoutParams(-1, dp(44)));
+        TextView subtitle = text("RÉGLAGES DE LA BOX", 11, 0xBFFFFFFF);
+        subtitle.setLetterSpacing(0.14f);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, dp(24));
+        subtitleParams.bottomMargin = dp(14);
+        sidebar.addView(subtitle, subtitleParams);
+
+        settingsCategoryColumn = new LinearLayout(this);
+        settingsCategoryColumn.setOrientation(LinearLayout.VERTICAL);
+        sidebar.addView(settingsCategoryColumn, new LinearLayout.LayoutParams(-1, -2));
+        settingsCategoryButtons.clear();
+        for (int i = 0; i < SETTINGS_MENU_LABELS.length; i++) {
+            final int category = i;
+            TextView item = text(SETTINGS_MENU_LABELS[i], 17, 0xFFE8EAF0);
+            item.setId(View.generateViewId());
+            item.setGravity(Gravity.CENTER_VERTICAL);
+            item.setPadding(dp(18), 0, dp(12), 0);
+            item.setFocusable(true);
+            item.setBackground(round(0x44313D4C, dp(16), 0x00000000, 0));
+            item.setContentDescription("Réglage : " + SETTINGS_MENU_LABELS[i]);
+            item.setOnFocusChangeListener((v, focused) -> {
+                if (focused) selectSettingsCategory(category);
+                updateSettingsCategoryStyles();
+            });
+            item.setOnClickListener(v -> selectSettingsCategory(category));
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(-1, dp(52));
+            itemParams.bottomMargin = dp(4);
+            settingsCategoryColumn.addView(item, itemParams);
+            settingsCategoryButtons.add(item);
+        }
+        LinearLayout.LayoutParams sidebarParams = new LinearLayout.LayoutParams(dp(278), -1);
+        sidebarParams.rightMargin = dp(30);
+        content.addView(sidebar, sidebarParams);
+
+        LinearLayout detailPane = new LinearLayout(this);
+        detailPane.setOrientation(LinearLayout.VERTICAL);
+        detailPane.setGravity(Gravity.CENTER_VERTICAL);
+        detailPane.setPadding(dp(38), dp(34), dp(38), dp(34));
+        detailPane.setBackground(gradientRound(0xE5233042, 0xE5121B29,
+                dp(28), 0x55FFFFFF, dp(1)));
+        content.addView(detailPane, new LinearLayout.LayoutParams(0, -1, 1));
+
+        TextView sectionLabel = text("APPAREIL", 11, 0xFFBAC7D6);
+        sectionLabel.setLetterSpacing(0.16f);
+        detailPane.addView(sectionLabel, new LinearLayout.LayoutParams(-1, dp(26)));
+        settingsDetailTitle = text("", 28, Color.WHITE);
+        settingsDetailTitle.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        LinearLayout.LayoutParams detailTitleParams = new LinearLayout.LayoutParams(-1, -2);
+        detailTitleParams.topMargin = dp(4);
+        detailPane.addView(settingsDetailTitle, detailTitleParams);
+        settingsDetailDescription = text("", 16, 0xFFD5DAE2);
+        settingsDetailDescription.setGravity(Gravity.TOP | Gravity.START);
+        settingsDetailDescription.setLineSpacing(dp(4), 1.0f);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
+        descriptionParams.topMargin = dp(14);
+        descriptionParams.bottomMargin = dp(30);
+        detailPane.addView(settingsDetailDescription, descriptionParams);
+
+        settingsDetailBody = new LinearLayout(this);
+        settingsDetailBody.setOrientation(LinearLayout.VERTICAL);
+        detailPane.addView(settingsDetailBody, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView footer = text("FLÈCHES : NAVIGUER     OK : OUVRIR     RETOUR : FERMER",
+                11, 0xCFFFFFFF);
+        footer.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams footerParams = new FrameLayout.LayoutParams(-1, dp(36),
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        footerParams.bottomMargin = dp(16);
+        panel.addView(footer, footerParams);
+
+        for (int i = 0; i < settingsCategoryButtons.size(); i++) {
+            TextView item = settingsCategoryButtons.get(i);
+            item.setNextFocusUpId(settingsCategoryButtons.get(Math.max(0, i - 1)).getId());
+            item.setNextFocusDownId(settingsCategoryButtons.get(
+                    Math.min(settingsCategoryButtons.size() - 1, i + 1)).getId());
+            item.setNextFocusLeftId(item.getId());
+        }
+        selectedSettingsCategory = 0;
+        selectSettingsCategory(0);
+        return panel;
+    }
+
+    private void openSettingsMenu() {
+        if (settingsPanel == null) return;
+        settingsPanel.setVisibility(View.VISIBLE);
+        selectSettingsCategory(selectedSettingsCategory);
+        settingsCategoryButtons.get(selectedSettingsCategory).requestFocus();
+    }
+
+    private void closeSettingsMenu() {
+        if (settingsPanel == null) return;
+        settingsPanel.setVisibility(View.GONE);
+        focusSettingsActionOnReturn = false;
+        if (settingsView != null) settingsView.requestFocus();
+    }
+
+    private void selectSettingsCategory(int category) {
+        if (category < 0 || category >= SETTINGS_MENU_LABELS.length
+                || settingsDetailBody == null) return;
+        selectedSettingsCategory = category;
+        settingsDetailTitle.setText(SETTINGS_MENU_LABELS[category]);
+        settingsDetailDescription.setText(SETTINGS_MENU_DESCRIPTIONS[category]);
+        settingsDetailBody.removeAllViews();
+
+        TextView action = text(SETTINGS_MENU_ACTION_LABELS[category] + "   ›", 18, Color.WHITE);
+        action.setId(View.generateViewId());
+        action.setGravity(Gravity.CENTER_VERTICAL);
+        action.setPadding(dp(20), 0, dp(20), 0);
+        action.setFocusable(true);
+        action.setContentDescription(SETTINGS_MENU_ACTION_LABELS[category]);
+        action.setBackground(gradientRound(0xFF536D87, 0xFF34485F,
+                dp(18), 0x77FFFFFF, dp(1)));
+        action.setOnFocusChangeListener((v, focused) -> {
+            v.setBackground(gradientRound(
+                    focused ? 0xFF6985A0 : 0xFF536D87,
+                    focused ? 0xFF465D75 : 0xFF34485F,
+                    dp(18), focused ? 0xFFF0F5FB : 0x77FFFFFF,
+                    focused ? dp(2) : dp(1)));
+            v.setElevation(focused ? dp(12) : dp(2));
+            v.animate().scaleX(focused ? 1.025f : 1f).scaleY(focused ? 1.025f : 1f)
+                    .setDuration(150).start();
+        });
+        action.setOnClickListener(v -> openSelectedSettingPage());
+        settingsDetailBody.addView(action, new LinearLayout.LayoutParams(-1, dp(64)));
+        settingsActionView = action;
+
+        for (TextView item : settingsCategoryButtons) {
+            item.setNextFocusRightId(action.getId());
+        }
+        action.setNextFocusLeftId(settingsCategoryButtons.get(category).getId());
+        action.setNextFocusRightId(action.getId());
+        action.setNextFocusUpId(action.getId());
+        action.setNextFocusDownId(action.getId());
+        updateSettingsCategoryStyles();
+    }
+
+    private void updateSettingsCategoryStyles() {
+        for (int i = 0; i < settingsCategoryButtons.size(); i++) {
+            TextView item = settingsCategoryButtons.get(i);
+            boolean active = i == selectedSettingsCategory;
+            boolean focused = item.hasFocus();
+            item.setTextColor(active || focused ? Color.WHITE : 0xFFE8EAF0);
+            item.setTypeface(Typeface.create(active || focused
+                    ? "sans-serif-medium" : "sans-serif", Typeface.NORMAL));
+            item.setBackground(round(active || focused ? 0x77677F98 : 0x44313D4C,
+                    dp(16), active || focused ? 0xCCEDF4FC : 0x00000000,
+                    active || focused ? dp(1) : 0));
+        }
+    }
+
+    private void openSelectedSettingPage() {
+        try {
+            focusSettingsActionOnReturn = true;
+            startActivity(new Intent(SETTINGS_MENU_ACTIONS[selectedSettingsCategory]));
+        } catch (Exception e) {
+            focusSettingsActionOnReturn = false;
+            Toast.makeText(this, "Ces réglages ne sont pas accessibles sur cette box.",
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void openSettings() {
         try {
             startActivity(new Intent(Settings.ACTION_SETTINGS));
@@ -704,6 +985,23 @@ public class MainActivity extends Activity {
         drawable.setCornerRadius(radius);
         if (strokeWidth > 0) drawable.setStroke(strokeWidth, strokeColor);
         return drawable;
+    }
+
+    private GradientDrawable gradientRound(int startColor, int endColor, int radius,
+                                           int strokeColor, int strokeWidth) {
+        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{startColor, endColor});
+        drawable.setCornerRadius(radius);
+        if (strokeWidth > 0) drawable.setStroke(strokeWidth, strokeColor);
+        return drawable;
+    }
+
+    private int blendColor(int color, int target, float amount) {
+        float inverse = 1.0f - amount;
+        return Color.rgb(
+                Math.round(Color.red(color) * inverse + Color.red(target) * amount),
+                Math.round(Color.green(color) * inverse + Color.green(target) * amount),
+                Math.round(Color.blue(color) * inverse + Color.blue(target) * amount));
     }
 
     private int dp(float value) {
