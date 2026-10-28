@@ -5,7 +5,6 @@ import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -60,6 +59,8 @@ public class MainActivity extends Activity {
     private TextView clockView;
     private TextView dateView;
     private TextView wifiView;
+    private TextView searchView;
+    private TextView settingsView;
     private TextView hintView;
     private TextView lastAppNameView;
     private ImageView lastAppIconView;
@@ -83,6 +84,7 @@ public class MainActivity extends Activity {
         super.onResume();
         hideSystemBars();
         updateHeader();
+        refreshAppGrid();
         updateLastAppCard();
         if (root != null) root.post(() -> {
             if (focusLastAppOnReturn && lastAppCard.getVisibility() == View.VISIBLE) {
@@ -207,20 +209,34 @@ public class MainActivity extends Activity {
         header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
         wifiView = text("◔  Wi-Fi", 13, 0xFFE9E5E2);
+        wifiView.setId(View.generateViewId());
         wifiView.setGravity(Gravity.CENTER);
         wifiView.setPadding(dp(10), 0, dp(20), 0);
         wifiView.setBackground(round(0x66303D55, dp(18), 0x55DDEEFF, dp(1)));
+        wifiView.setFocusable(true);
+        wifiView.setContentDescription("Open Wi-Fi settings");
+        wifiView.setOnClickListener(v -> openWifiSettings());
+        wifiView.setOnFocusChangeListener((v, focused) -> v.setBackground(round(
+                focused ? 0x88466C92 : 0x66303D55, dp(18),
+                focused ? 0xFFE5F5FF : 0x55DDEEFF, focused ? dp(2) : dp(1))));
         header.addView(wifiView, new LinearLayout.LayoutParams(-2, dp(44)));
 
-        TextView search = headerButton("⌕", "Recherche");
-        search.setOnClickListener(v -> showSearch());
-        header.addView(search, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        searchView = headerButton("⌕", "Recherche");
+        searchView.setId(View.generateViewId());
+        searchView.setOnClickListener(v -> showSearch());
+        header.addView(searchView, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
-        TextView settings = headerButton("⚙", "Paramètres");
+        settingsView = headerButton("⚙", "Paramètres");
+        settingsView.setId(View.generateViewId());
         LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(dp(48), dp(48));
         settingsParams.leftMargin = dp(8);
-        header.addView(settings, settingsParams);
-        settings.setOnClickListener(v -> openSettings());
+        header.addView(settingsView, settingsParams);
+        settingsView.setOnClickListener(v -> openSettings());
+
+        wifiView.setNextFocusRightId(searchView.getId());
+        searchView.setNextFocusLeftId(wifiView.getId());
+        searchView.setNextFocusRightId(settingsView.getId());
+        settingsView.setNextFocusLeftId(searchView.getId());
         return header;
     }
 
@@ -313,10 +329,44 @@ public class MainActivity extends Activity {
         return grid;
     }
 
+    private void refreshAppGrid() {
+        if (appGrid == null) return;
+        List<AppEntry> refreshed = findLaunchableApps();
+        boolean changed = refreshed.size() != launchableApps.size();
+        if (!changed) {
+            for (int i = 0; i < refreshed.size(); i++) {
+                AppEntry oldApp = launchableApps.get(i);
+                AppEntry newApp = refreshed.get(i);
+                if (!oldApp.packageName.equals(newApp.packageName)
+                        || !oldApp.label.equals(newApp.label)) {
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (!changed) return;
+
+        launchableApps.clear();
+        launchableApps.addAll(refreshed);
+        appGrid.removeAllViews();
+        if (launchableApps.isEmpty()) {
+            TextView empty = text("Aucune application de lancement détectée", 18, Color.WHITE);
+            empty.setGravity(Gravity.CENTER);
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(0), GridLayout.spec(0));
+            params.width = dp(appCellWidthDp * 4);
+            params.height = dp(70);
+            appGrid.addView(empty, params);
+        } else {
+            populateAppGrid(appGrid, appCellWidthDp);
+        }
+    }
+
     private void populateAppGrid(GridLayout grid, int cellWidthDp) {
         grid.removeAllViews();
         for (int i = 0; i < launchableApps.size(); i++) {
             View tile = createAppTile(launchableApps.get(i), cellWidthDp);
+            if (i < 6 && wifiView != null) tile.setNextFocusUpId(wifiView.getId());
             GridLayout.LayoutParams params = new GridLayout.LayoutParams(
                     GridLayout.spec(i / 6, GridLayout.CENTER),
                     GridLayout.spec(i % 6, GridLayout.CENTER));
@@ -325,10 +375,17 @@ public class MainActivity extends Activity {
             params.setMargins(dp(6), dp(8), dp(6), dp(8));
             grid.addView(tile, params);
         }
+        if (grid.getChildCount() > 0 && wifiView != null) {
+            int firstAppId = grid.getChildAt(0).getId();
+            wifiView.setNextFocusDownId(firstAppId);
+            if (searchView != null) searchView.setNextFocusDownId(firstAppId);
+            if (settingsView != null) settingsView.setNextFocusDownId(firstAppId);
+        }
     }
 
     private View createAppTile(AppEntry app, int cellWidthDp) {
         LinearLayout tile = new LinearLayout(this);
+        tile.setId(View.generateViewId());
         tile.setOrientation(LinearLayout.VERTICAL);
         tile.setGravity(Gravity.CENTER);
         tile.setFocusable(true);
@@ -337,7 +394,7 @@ public class MainActivity extends Activity {
         tile.setPadding(dp(3), dp(2), dp(3), dp(2));
 
         int cardHeightDp = appTileHeightDp - 27;
-        int radius = dp(13);
+        int radius = dp(20);
         int backgroundColor = dominantIconColor(app.icon);
         FrameLayout card = new FrameLayout(this);
         card.setBackground(round(backgroundColor, radius, 0, 0));
@@ -538,14 +595,6 @@ public class MainActivity extends Activity {
             String packageName = info.activityInfo.packageName;
             CharSequence appName = info.loadLabel(getPackageManager());
             String label = appName == null ? packageName : appName.toString();
-            int flags = info.activityInfo.applicationInfo.flags;
-            boolean systemApp = (flags & (ApplicationInfo.FLAG_SYSTEM
-                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
-            boolean tvLauncherApp = Intent.CATEGORY_LEANBACK_LAUNCHER.equals(category);
-            if (isUtilityApp(packageName, label)) continue;
-            // Keep TV apps supplied with the box, while hiding generic system tools such as
-            // Camera and Chrome. User-installed apps remain available in the row.
-            if (systemApp && !tvLauncherApp && !isMediaApp(packageName, label)) continue;
             if (!seen.add(packageName)) continue;
             try {
                 Drawable icon = info.loadIcon(getPackageManager());
@@ -557,27 +606,6 @@ public class MainActivity extends Activity {
                 // A broken app icon should not stop other installed apps from appearing.
             }
         }
-    }
-
-    private boolean isUtilityApp(String packageName, String label) {
-        String name = label.toLowerCase(Locale.ROOT).trim();
-        String pkg = packageName.toLowerCase(Locale.ROOT);
-        return name.equals("camera") || name.contains("camera") || name.contains("caméra")
-                || name.contains("appareil photo") || name.equals("settings")
-                || name.contains("settings") || name.contains("paramètres")
-                || name.equals("chrome") || name.contains("clean up") || name.equals("cleanup")
-                || name.equals("nettoyage") || pkg.contains("camera") || pkg.contains("settings");
-    }
-
-    private boolean isMediaApp(String packageName, String label) {
-        String identity = (packageName + " " + label).toLowerCase(Locale.ROOT);
-        return identity.contains("netflix") || identity.contains("youtube")
-                || identity.contains("prime video") || identity.contains("amazonvideo")
-                || identity.contains("disney") || identity.contains("iptv")
-                || identity.contains("atlas") || identity.contains("dino")
-                || identity.contains("onyx") || identity.contains("rplayer")
-                || identity.contains("stream") || identity.contains("plex")
-                || identity.contains("kodi") || identity.contains("vlc");
     }
 
     private void launch(AppEntry app) {
@@ -638,6 +666,14 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_SETTINGS));
         } catch (Exception e) {
             Toast.makeText(this, "Les paramètres ne sont pas accessibles.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openWifiSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));
+        } catch (Exception e) {
+            openSettings();
         }
     }
 
