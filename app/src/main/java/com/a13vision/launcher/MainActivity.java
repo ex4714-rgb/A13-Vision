@@ -5,8 +5,12 @@ import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.ConnectivityManager;
@@ -14,6 +18,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -23,7 +28,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -32,6 +37,7 @@ import android.widget.Toast;
 import java.text.Collator;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Date;
 import java.util.HashSet;
@@ -55,9 +61,14 @@ public class MainActivity extends Activity {
     private TextView dateView;
     private TextView wifiView;
     private TextView hintView;
-    private LinearLayout appRow;
-    private HorizontalScrollView appScroller;
+    private TextView lastAppNameView;
+    private ImageView lastAppIconView;
+    private LinearLayout lastAppCard;
+    private GridLayout appGrid;
+    private int appCellWidthDp;
+    private int appTileHeightDp;
     private boolean arrangeMode;
+    private boolean focusLastAppOnReturn;
     private final List<AppEntry> launchableApps = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -65,13 +76,23 @@ public class MainActivity extends Activity {
         hideSystemBars();
         setContentView(buildHome());
         updateHeader();
+        updateLastAppCard();
     }
 
     @Override protected void onResume() {
         super.onResume();
         hideSystemBars();
         updateHeader();
-        if (root != null) root.post(this::focusNetflixOrFirstApp);
+        updateLastAppCard();
+        if (root != null) root.post(() -> {
+            if (focusLastAppOnReturn && lastAppCard.getVisibility() == View.VISIBLE) {
+                focusLastAppOnReturn = false;
+                lastAppCard.requestFocus();
+            } else {
+                focusLastAppOnReturn = false;
+                focusFirstOrChosenApp();
+            }
+        });
         handler.removeCallbacks(clockUpdater);
         handler.post(clockUpdater);
     }
@@ -94,10 +115,18 @@ public class MainActivity extends Activity {
             if (down && arrangeMode) exitArrangeMode();
             return true;
         }
+        if (!arrangeMode && down
+                && (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)
+                && event.isLongPress()) {
+            enterArrangeMode();
+            return true;
+        }
         if (arrangeMode) {
             if (down) {
                 if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) moveFocusedApp(-1);
                 else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) moveFocusedApp(1);
+                else if (keyCode == KeyEvent.KEYCODE_DPAD_UP) moveFocusedApp(-6);
+                else if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) moveFocusedApp(6);
                 else if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
                     setFocusedAppAsStartup();
                 }
@@ -123,29 +152,40 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
 
         ImageView wallpaper = new ImageView(this);
-        wallpaper.setImageResource(R.drawable.desert_sunset);
+        wallpaper.setImageResource(R.drawable.ringed_world);
         wallpaper.setScaleType(ImageView.ScaleType.CENTER_CROP);
         root.addView(wallpaper, new FrameLayout.LayoutParams(-1, -1));
 
         View shade = new View(this);
         shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x75070A16, 0x18070A16, 0x9C090811}));
+                new int[]{0x48040B1A, 0x2A030A18, 0x62020712}));
         root.addView(shade, new FrameLayout.LayoutParams(-1, -1));
         root.addView(buildHeader(), new FrameLayout.LayoutParams(-1, dp(94), Gravity.TOP));
 
-        appScroller = buildAppRow();
-        root.addView(appScroller, new FrameLayout.LayoutParams(-1, dp(270), Gravity.CENTER));
+        lastAppCard = buildLastAppCard();
+        FrameLayout.LayoutParams lastAppParams = new FrameLayout.LayoutParams(dp(260), dp(58),
+                Gravity.TOP | Gravity.START);
+        lastAppParams.leftMargin = dp(56);
+        lastAppParams.topMargin = dp(100);
 
-        hintView = text("MENU ou OK maintenu : réorganiser  ·  Flèches : naviguer", 13, 0xBFFFFFFF);
+        appGrid = buildAppGrid();
+        FrameLayout.LayoutParams gridParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
+        gridParams.topMargin = dp(34);
+        root.addView(appGrid, gridParams);
+        root.addView(lastAppCard, lastAppParams);
+
+        hintView = text("MENU / OK : organiser", 12, 0xF2FFFFFF);
         hintView.setGravity(Gravity.CENTER);
-        hintView.setLetterSpacing(0.03f);
-        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-1, dp(30),
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        hintParams.bottomMargin = dp(28);
+        hintView.setPadding(dp(18), 0, dp(18), 0);
+        hintView.setBackground(round(0x3DFFFFFF, dp(24), 0x55FFFFFF, dp(1)));
+        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-2, dp(42),
+                Gravity.BOTTOM | Gravity.END);
+        hintParams.rightMargin = dp(48);
+        hintParams.bottomMargin = dp(38);
         root.addView(hintView, hintParams);
 
         root.setFocusableInTouchMode(true);
-        root.post(this::focusNetflixOrFirstApp);
+        root.post(this::focusFirstOrChosenApp);
         return root;
     }
 
@@ -154,25 +194,22 @@ public class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(56), dp(18), dp(56), dp(6));
 
-        View spacer = new View(this);
-        header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-
         LinearLayout dateTime = new LinearLayout(this);
         dateTime.setOrientation(LinearLayout.VERTICAL);
-        dateTime.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        clockView = text("--:--", 19, Color.WHITE);
-        clockView.setGravity(Gravity.END);
-        dateView = text("", 11, 0xDFFFFFFF);
-        dateView.setGravity(Gravity.END);
+        dateTime.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        clockView = text("--:--", 22, Color.WHITE);
+        dateView = text("", 12, 0xDFFFFFFF);
         dateTime.addView(clockView);
         dateTime.addView(dateView);
-        LinearLayout.LayoutParams dateParams = new LinearLayout.LayoutParams(-2, -2);
-        dateParams.rightMargin = dp(28);
-        header.addView(dateTime, dateParams);
+        header.addView(dateTime, new LinearLayout.LayoutParams(-2, -2));
+
+        View spacer = new View(this);
+        header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
         wifiView = text("◔  Wi-Fi", 13, 0xFFE9E5E2);
         wifiView.setGravity(Gravity.CENTER);
         wifiView.setPadding(dp(10), 0, dp(20), 0);
+        wifiView.setBackground(round(0x66303D55, dp(18), 0x55DDEEFF, dp(1)));
         header.addView(wifiView, new LinearLayout.LayoutParams(-2, dp(44)));
 
         TextView search = headerButton("⌕", "Recherche");
@@ -187,44 +224,107 @@ public class MainActivity extends Activity {
         return header;
     }
 
-    private HorizontalScrollView buildAppRow() {
+    private LinearLayout buildLastAppCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(11), dp(6), dp(12), dp(6));
+        card.setBackground(round(0x66303D55, dp(15), 0x66DDEEFF, dp(1)));
+        card.setFocusable(true);
+        card.setContentDescription("Last app used");
+
+        lastAppIconView = new ImageView(this);
+        lastAppIconView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        iconParams.rightMargin = dp(11);
+        card.addView(lastAppIconView, iconParams);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView heading = text("LAST APP USED", 9, 0xCFFFFFFF);
+        heading.setLetterSpacing(0.08f);
+        lastAppNameView = text("", 13, Color.WHITE);
+        lastAppNameView.setSingleLine(true);
+        lastAppNameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        labels.addView(heading);
+        labels.addView(lastAppNameView);
+        card.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView play = text("▶  REPRENDRE", 9, Color.WHITE);
+        play.setGravity(Gravity.CENTER);
+        card.addView(play, new LinearLayout.LayoutParams(-2, dp(36)));
+        card.setOnFocusChangeListener((v, focused) -> v.setBackground(round(
+                focused ? 0x88466C92 : 0x66303D55, dp(15),
+                focused ? 0xFFE5F5FF : 0x66DDEEFF, focused ? dp(2) : dp(1))));
+        return card;
+    }
+
+    private void updateLastAppCard() {
+        if (lastAppCard == null) return;
+        String packageName = getPreferences(MODE_PRIVATE).getString("last_app_package", null);
+        AppEntry lastApp = null;
+        if (packageName != null) {
+            for (AppEntry app : launchableApps) {
+                if (packageName.equals(app.packageName)) {
+                    lastApp = app;
+                    break;
+                }
+            }
+        }
+        if (lastApp == null) {
+            lastAppCard.setVisibility(View.GONE);
+            return;
+        }
+        AppEntry appToLaunch = lastApp;
+        lastAppCard.setVisibility(View.VISIBLE);
+        lastAppCard.setContentDescription("Reprendre " + lastApp.label);
+        lastAppIconView.setImageDrawable(lastApp.icon);
+        lastAppNameView.setText(lastApp.label);
+        lastAppCard.setOnClickListener(v -> launch(appToLaunch));
+    }
+
+    private GridLayout buildAppGrid() {
         launchableApps.clear();
         launchableApps.addAll(findLaunchableApps());
 
-        HorizontalScrollView scroller = new HorizontalScrollView(this);
-        scroller.setHorizontalScrollBarEnabled(false);
-        scroller.setClipToPadding(false);
-        scroller.setFillViewport(true);
-        scroller.setFocusable(false);
-
         int screenWidthDp = (int) (getResources().getDisplayMetrics().widthPixels
                 / getResources().getDisplayMetrics().density);
-        int availableWidth = getResources().getDisplayMetrics().widthPixels - dp(112);
-        int cellWidthDp = Math.min(168, Math.max(116, screenWidthDp / 7));
-        int rowWidth = Math.max(availableWidth,
-                launchableApps.size() * dp(cellWidthDp + 16) + dp(16));
+        appCellWidthDp = Math.min(148, Math.max(84, (int) (screenWidthDp / 7.2f)));
+        appTileHeightDp = Math.min(124, Math.max(92, (int) (appCellWidthDp * 0.94f)));
 
-        appRow = new LinearLayout(this);
-        appRow.setOrientation(LinearLayout.HORIZONTAL);
-        appRow.setGravity(Gravity.CENTER);
-        appRow.setMinimumWidth(availableWidth);
-        appRow.setPadding(dp(8), dp(10), dp(8), dp(10));
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(6);
+        grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
+        grid.setUseDefaultMargins(false);
+        grid.setFocusable(false);
 
         if (launchableApps.isEmpty()) {
             TextView empty = text("Aucune application de lancement détectée", 18, Color.WHITE);
             empty.setGravity(Gravity.CENTER);
-            appRow.addView(empty, new LinearLayout.LayoutParams(rowWidth, dp(80)));
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(0), GridLayout.spec(0));
+            params.width = dp(appCellWidthDp * 4);
+            params.height = dp(70);
+            grid.addView(empty, params);
         } else {
-            for (AppEntry app : launchableApps) {
-                View tile = createAppTile(app, cellWidthDp);
-                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(cellWidthDp), dp(224));
-                params.leftMargin = dp(8);
-                params.rightMargin = dp(8);
-                appRow.addView(tile, params);
-            }
+            populateAppGrid(grid, appCellWidthDp);
         }
-        scroller.addView(appRow, new HorizontalScrollView.LayoutParams(rowWidth, -2));
-        return scroller;
+        return grid;
+    }
+
+    private void populateAppGrid(GridLayout grid, int cellWidthDp) {
+        grid.removeAllViews();
+        for (int i = 0; i < launchableApps.size(); i++) {
+            View tile = createAppTile(launchableApps.get(i), cellWidthDp);
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(i / 6, GridLayout.CENTER),
+                    GridLayout.spec(i % 6, GridLayout.CENTER));
+            params.width = dp(cellWidthDp);
+            params.height = dp(appTileHeightDp);
+            params.setMargins(dp(6), dp(8), dp(6), dp(8));
+            grid.addView(tile, params);
+        }
     }
 
     private View createAppTile(AppEntry app, int cellWidthDp) {
@@ -234,40 +334,51 @@ public class MainActivity extends Activity {
         tile.setFocusable(true);
         tile.setFocusableInTouchMode(true);
         tile.setContentDescription(app.label);
-        tile.setPadding(dp(7), dp(8), dp(7), dp(8));
-        tile.setBackground(round(0x00FFFFFF, dp(24), 0, 0));
-        tile.setOnFocusChangeListener((v, focused) -> {
-            if (focused) {
-                v.setBackground(round(0x37FFFFFF, dp(24), 0xFFF3E8DA, dp(2)));
-                v.setScaleX(1.045f);
-                v.setScaleY(1.045f);
-                v.setElevation(dp(12));
-            } else {
-                v.setBackground(round(0x00FFFFFF, dp(24), 0, 0));
-                v.setScaleX(1f);
-                v.setScaleY(1f);
-                v.setElevation(0);
-            }
-        });
+        tile.setPadding(dp(3), dp(2), dp(3), dp(2));
 
-        int iconSize = Math.min(dp(112), dp(cellWidthDp - 20));
-        FrameLayout iconBox = new FrameLayout(this);
-        iconBox.setBackground(round(0x45101524, dp(22), 0x44FFFFFF, dp(1)));
+        int cardHeightDp = appTileHeightDp - 27;
+        int radius = dp(13);
+        int backgroundColor = dominantIconColor(app.icon);
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(round(backgroundColor, radius, 0, 0));
+        card.setClipToOutline(true);
+
+        Drawable adaptiveBackground = adaptiveIconBackground(app.icon);
+        if (adaptiveBackground != null) {
+            ImageView background = new ImageView(this);
+            background.setImageDrawable(adaptiveBackground);
+            background.setScaleType(ImageView.ScaleType.FIT_XY);
+            card.addView(background, new FrameLayout.LayoutParams(-1, -1));
+        }
+
+        int iconSize = Math.min(dp(72), dp(cardHeightDp - 14));
         ImageView icon = new ImageView(this);
-        icon.setImageDrawable(app.icon);
+        icon.setImageDrawable(adaptiveIconForeground(app.icon));
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        int inset = dp(12);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(-1, -1);
-        iconParams.setMargins(inset, inset, inset, inset);
-        iconBox.addView(icon, iconParams);
-        tile.addView(iconBox, new LinearLayout.LayoutParams(iconSize, iconSize));
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(iconSize, iconSize,
+                Gravity.CENTER);
+        card.addView(icon, iconParams);
 
-        TextView caption = text(app.label, 14, 0xFFF8F6F4);
+        View outline = new View(this);
+        outline.setBackground(round(0x00000000, radius, 0x66FFFFFF, dp(1)));
+        card.addView(outline, new FrameLayout.LayoutParams(-1, -1));
+        tile.addView(card, new LinearLayout.LayoutParams(-1, dp(cardHeightDp)));
+
+        TextView caption = text(app.label, 11, 0xF5FFFFFF);
         caption.setGravity(Gravity.CENTER);
         caption.setSingleLine(true);
         caption.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        caption.setPadding(dp(3), dp(12), dp(3), 0);
+        caption.setPadding(dp(2), dp(5), dp(2), 0);
         tile.addView(caption, new LinearLayout.LayoutParams(-1, -2));
+        tile.setOnFocusChangeListener((v, focused) -> {
+            outline.setBackground(round(0x00000000, radius,
+                    focused ? 0xFFE5F5FF : 0x66FFFFFF, focused ? dp(2) : dp(1)));
+            card.animate().scaleX(focused ? 1.045f : 1f).scaleY(focused ? 1.045f : 1f)
+                    .setDuration(170).start();
+            card.setElevation(focused ? dp(12) : 0);
+            caption.setTextColor(focused ? Color.WHITE : 0xD9FFFFFF);
+            caption.setTypeface(null, focused ? Typeface.BOLD : Typeface.NORMAL);
+        });
         tile.setOnClickListener(v -> launch(app));
         tile.setOnLongClickListener(v -> {
             enterArrangeMode();
@@ -276,18 +387,76 @@ public class MainActivity extends Activity {
         return tile;
     }
 
-    private void focusNetflixOrFirstApp() {
-        if (appRow == null || appRow.getChildCount() == 0) return;
-        int focusIndex = 0;
-        String startupPackage = getPreferences(MODE_PRIVATE).getString(
-                "startup_package", "com.netflix.mediaclient");
-        for (int i = 0; i < launchableApps.size(); i++) {
-            if (startupPackage.equals(launchableApps.get(i).packageName)) {
-                focusIndex = i;
-                break;
+    private Drawable adaptiveIconBackground(Drawable icon) {
+        if (Build.VERSION.SDK_INT >= 26 && icon instanceof AdaptiveIconDrawable) {
+            return copyDrawable(((AdaptiveIconDrawable) icon).getBackground());
+        }
+        return null;
+    }
+
+    private Drawable adaptiveIconForeground(Drawable icon) {
+        if (Build.VERSION.SDK_INT >= 26 && icon instanceof AdaptiveIconDrawable) {
+            Drawable foreground = ((AdaptiveIconDrawable) icon).getForeground();
+            if (foreground != null) return copyDrawable(foreground);
+        }
+        return copyDrawable(icon);
+    }
+
+    private Drawable copyDrawable(Drawable drawable) {
+        if (drawable == null) return null;
+        Drawable.ConstantState state = drawable.getConstantState();
+        Drawable copy = state == null ? drawable : state.newDrawable(getResources());
+        return copy.mutate();
+    }
+
+    private int dominantIconColor(Drawable icon) {
+        Bitmap sample = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(sample);
+        Drawable drawable = copyDrawable(icon);
+        drawable.setBounds(0, 0, sample.getWidth(), sample.getHeight());
+        drawable.draw(canvas);
+
+        Map<Integer, Integer> colors = new HashMap<>();
+        int opaquePixels = 0;
+        for (int y = 0; y < sample.getHeight(); y++) {
+            for (int x = 0; x < sample.getWidth(); x++) {
+                int pixel = sample.getPixel(x, y);
+                if (Color.alpha(pixel) < 150) continue;
+                opaquePixels++;
+                int grouped = Color.rgb((Color.red(pixel) / 24) * 24,
+                        (Color.green(pixel) / 24) * 24, (Color.blue(pixel) / 24) * 24);
+                Integer count = colors.get(grouped);
+                colors.put(grouped, count == null ? 1 : count + 1);
             }
         }
-        View tile = appRow.getChildAt(focusIndex);
+        sample.recycle();
+
+        if (opaquePixels < 200) return 0xFF20354D;
+        int chosen = 0xFF385572;
+        int mostCommon = 0;
+        for (Map.Entry<Integer, Integer> entry : colors.entrySet()) {
+            if (entry.getValue() > mostCommon) {
+                chosen = entry.getKey();
+                mostCommon = entry.getValue();
+            }
+        }
+        return chosen;
+    }
+
+    private void focusFirstOrChosenApp() {
+        if (appGrid == null || appGrid.getChildCount() == 0) return;
+        int focusIndex = 0;
+        String startupPackage = getPreferences(MODE_PRIVATE).getString("startup_package", null);
+        // Ignore Netflix if it was saved by the old default-focus behavior.
+        if (startupPackage != null && !startupPackage.equals("com.netflix.mediaclient")) {
+            for (int i = 0; i < launchableApps.size(); i++) {
+                if (startupPackage.equals(launchableApps.get(i).packageName)) {
+                    focusIndex = i;
+                    break;
+                }
+            }
+        }
+        View tile = appGrid.getChildAt(focusIndex);
         if (tile != null) tile.requestFocus();
     }
 
@@ -317,42 +486,30 @@ public class MainActivity extends Activity {
     private void enterArrangeMode() {
         if (arrangeMode || launchableApps.isEmpty()) return;
         View focused = getCurrentFocus();
-        if (focused == null || appRow.indexOfChild(focused) < 0) focusNetflixOrFirstApp();
+        if (focused == null || appGrid.indexOfChild(focused) < 0) focusFirstOrChosenApp();
         arrangeMode = true;
-        hintView.setText("←/→ déplacer  ·  OK choisir le focus de départ  ·  Retour terminer");
+        hintView.setText("Flèches : déplacer  ·  OK choisir le focus  ·  Retour terminer");
         Toast.makeText(this, "Mode réorganisation", Toast.LENGTH_SHORT).show();
     }
 
     private void exitArrangeMode() {
         arrangeMode = false;
-        hintView.setText("MENU ou OK maintenu : réorganiser  ·  Flèches : naviguer");
+        hintView.setText("MENU / OK : organiser");
     }
 
     private void moveFocusedApp(int direction) {
-        if (appRow == null) return;
+        if (appGrid == null) return;
         View focused = getCurrentFocus();
-        int from = focused == null ? -1 : appRow.indexOfChild(focused);
+        int from = focused == null ? -1 : appGrid.indexOfChild(focused);
         int to = from + direction;
         if (from < 0 || to < 0 || to >= launchableApps.size()) return;
-        AppEntry moving = launchableApps.remove(from);
-        launchableApps.add(to, moving);
-        View tile = appRow.getChildAt(from);
-        appRow.removeViewAt(from);
-        appRow.addView(tile, to);
+        if ((direction == -1 || direction == 1) && from / 6 != to / 6) return;
+        if ((direction == -6 || direction == 6) && from % 6 != to % 6) return;
+        Collections.swap(launchableApps, from, to);
         saveAppOrder();
+        populateAppGrid(appGrid, appCellWidthDp);
+        View tile = appGrid.getChildAt(to);
         tile.requestFocus();
-        if (appScroller != null) {
-            tile.post(() -> {
-                int left = tile.getLeft();
-                int right = tile.getRight();
-                int visibleLeft = appScroller.getScrollX();
-                int visibleRight = visibleLeft + appScroller.getWidth();
-                if (left < visibleLeft) appScroller.smoothScrollTo(Math.max(0, left - dp(16)), 0);
-                else if (right > visibleRight) {
-                    appScroller.smoothScrollTo(right - appScroller.getWidth() + dp(16), 0);
-                }
-            });
-        }
     }
 
     private void saveAppOrder() {
@@ -366,7 +523,7 @@ public class MainActivity extends Activity {
 
     private void setFocusedAppAsStartup() {
         View focused = getCurrentFocus();
-        int index = focused == null || appRow == null ? -1 : appRow.indexOfChild(focused);
+        int index = focused == null || appGrid == null ? -1 : appGrid.indexOfChild(focused);
         if (index < 0 || index >= launchableApps.size()) return;
         AppEntry app = launchableApps.get(index);
         getPreferences(MODE_PRIVATE).edit().putString("startup_package", app.packageName).apply();
@@ -379,24 +536,57 @@ public class MainActivity extends Activity {
         for (android.content.pm.ResolveInfo info : getPackageManager().queryIntentActivities(query, 0)) {
             if (info.activityInfo == null || info.activityInfo.packageName.equals(getPackageName())) continue;
             String packageName = info.activityInfo.packageName;
+            CharSequence appName = info.loadLabel(getPackageManager());
+            String label = appName == null ? packageName : appName.toString();
+            int flags = info.activityInfo.applicationInfo.flags;
+            boolean systemApp = (flags & (ApplicationInfo.FLAG_SYSTEM
+                    | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
+            boolean tvLauncherApp = Intent.CATEGORY_LEANBACK_LAUNCHER.equals(category);
+            if (isUtilityApp(packageName, label)) continue;
+            // Keep TV apps supplied with the box, while hiding generic system tools such as
+            // Camera and Chrome. User-installed apps remain available in the row.
+            if (systemApp && !tvLauncherApp && !isMediaApp(packageName, label)) continue;
             if (!seen.add(packageName)) continue;
             try {
-                CharSequence name = info.loadLabel(getPackageManager());
                 Drawable icon = info.loadIcon(getPackageManager());
                 Intent launchIntent = new Intent(Intent.ACTION_MAIN);
                 launchIntent.setComponent(new ComponentName(packageName, info.activityInfo.name));
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                result.add(new AppEntry(packageName, name == null ? packageName : name.toString(), icon, launchIntent));
+                result.add(new AppEntry(packageName, label, icon, launchIntent));
             } catch (Exception ignored) {
                 // A broken app icon should not stop other installed apps from appearing.
             }
         }
     }
 
+    private boolean isUtilityApp(String packageName, String label) {
+        String name = label.toLowerCase(Locale.ROOT).trim();
+        String pkg = packageName.toLowerCase(Locale.ROOT);
+        return name.equals("camera") || name.contains("camera") || name.contains("caméra")
+                || name.contains("appareil photo") || name.equals("settings")
+                || name.contains("settings") || name.contains("paramètres")
+                || name.equals("chrome") || name.contains("clean up") || name.equals("cleanup")
+                || name.equals("nettoyage") || pkg.contains("camera") || pkg.contains("settings");
+    }
+
+    private boolean isMediaApp(String packageName, String label) {
+        String identity = (packageName + " " + label).toLowerCase(Locale.ROOT);
+        return identity.contains("netflix") || identity.contains("youtube")
+                || identity.contains("prime video") || identity.contains("amazonvideo")
+                || identity.contains("disney") || identity.contains("iptv")
+                || identity.contains("atlas") || identity.contains("dino")
+                || identity.contains("onyx") || identity.contains("rplayer")
+                || identity.contains("stream") || identity.contains("plex")
+                || identity.contains("kodi") || identity.contains("vlc");
+    }
+
     private void launch(AppEntry app) {
         try {
+            focusLastAppOnReturn = true;
             startActivity(app.launchIntent);
+            getPreferences(MODE_PRIVATE).edit().putString("last_app_package", app.packageName).apply();
         } catch (Exception e) {
+            focusLastAppOnReturn = false;
             Toast.makeText(this, "Impossible d’ouvrir " + app.label + ".", Toast.LENGTH_SHORT).show();
         }
     }
@@ -456,10 +646,10 @@ public class MainActivity extends Activity {
         button.setGravity(Gravity.CENTER);
         button.setFocusable(true);
         button.setContentDescription(description);
-        button.setBackground(round(0x17FFFFFF, dp(24), 0, 0));
+        button.setBackground(round(0x66303D55, dp(24), 0x55DDEEFF, dp(1)));
         button.setOnFocusChangeListener((v, focused) -> v.setBackground(round(
-                focused ? 0x39FFFFFF : 0x17FFFFFF, dp(24), focused ? 0xFFEFE4D7 : 0,
-                focused ? dp(2) : 0)));
+                focused ? 0x88466C92 : 0x66303D55, dp(24),
+                focused ? 0xFFE5F5FF : 0x55DDEEFF, focused ? dp(2) : dp(1))));
         return button;
     }
 
