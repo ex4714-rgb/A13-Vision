@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.a13vision.launcher'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.a13vision.launcher'
+        minSdk 23
+        targetSdk 33
+        versionCode 2
+        versionName '0.2.0'
+    }
+}
